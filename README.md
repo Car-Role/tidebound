@@ -53,5 +53,7 @@ WASD move, mouse aim, left mouse swing/attack, right mouse interact, Space dodge
 
 `npm test` runs the headless test suite (`node test/run.js [filter]`). After adding or removing a file in a
 wildcard folder (`server/game/ai`, `bosses`, `abilities`, `dungeon/keepers`, `dungeon/rooms-*.js`) run
-`npm run manifest` (the loader uses a checked-in file list so it also works in the browser). Architecture and ownership rules are in
+`npm run manifest` (the loader uses a checked-in file list so it also works in the browser).
+Silent mode for checks: add `?mute=1` to the page URL (no sound is ever started). Browsers driven by automation
+(`navigator.webdriver`) are silent by default; `?mute=0` turns sound back on. Architecture and ownership rules are in
 `docs/TECH_SPEC.md`; cross-package notes go in `docs/INTEGRATION_NOTES.md`.

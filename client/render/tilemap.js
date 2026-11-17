@@ -7,6 +7,7 @@ import { TILE_PX } from '../art/tilegen.js';
 
 const CHUNK_PX = CHUNK * TILE_PX;
 const MAX_REBUILDS_PER_FRAME = 6;
+const WATER_FALLBACK = RAMPS.sea?.[1] || '#16365e';   // plain deep sea while the water pattern is not ready
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -86,9 +87,16 @@ export class Tilemap {
 
   // Background: deep water pattern scrolled with time, plus silhouettes of unraised plots.
   drawWater(ctx, view, time) {
-    if (!this.waterPatterns) this.waterPatterns = this.tiles.water.map((w) => ctx.createPattern(w, 'repeat'));
+    // createPattern throws if a source (or the target) has 0 size, which a browser can report while a tab or pane
+    // is still laying out. Paint plain sea that frame and retry later instead of killing the frame loop.
+    if (!this.waterPatterns) {
+      try {
+        const pats = this.tiles.water.map((w) => (w && w.width > 0 && w.height > 0 ? ctx.createPattern(w, 'repeat') : null));
+        if (pats.length && pats.every(Boolean)) this.waterPatterns = pats;
+      } catch { /* retry next frame */ }
+    }
     const frame = Math.floor(time * 1.6) % 2;
-    const pat = this.waterPatterns[frame];
+    const pat = this.waterPatterns ? this.waterPatterns[frame] : WATER_FALLBACK;
     const ox = Math.round(time * 3) % 64;
     ctx.save();
     const mx = (((view.x - ox) % 64) + 64) % 64, my = ((view.y % 64) + 64) % 64;

@@ -62,7 +62,19 @@ function build() {
   return true;
 }
 
+// Silent mode for tests and checks: ?mute=1 on the page URL, or a browser driven by automation (navigator.webdriver).
+// ?mute=0 forces sound on. In silent mode no AudioContext is ever made, so nothing can play.
+export const SILENT = (() => {
+  try {
+    const q = new URLSearchParams(globalThis.location?.search || '').get('mute');
+    if (q === '0') return false;
+    if (q === '1' || q === 'true') return true;
+    return globalThis.navigator?.webdriver === true;
+  } catch { return false; }
+})();
+
 function unlock() {
+  if (SILENT) return;
   if (!ctx && !build()) return;
   if (ctx.state === 'suspended') ctx.resume?.();
   if (pendingMusic) { const [id, o] = pendingMusic; pendingMusic = null; music(id, o); }
