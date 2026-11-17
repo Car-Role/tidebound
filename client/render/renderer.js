@@ -61,6 +61,12 @@ export class Renderer {
   }
 
   frame(dt, now, time, selfPos, aim) {
+    // A window or pane can report 0 x 0 while hidden or still laying out; drawing a 0-size canvas throws. Re-measure,
+    // and skip the frame while there is nothing to draw on.
+    if (!this.canvas.width || !this.canvas.height || !this.game.width || !this.game.height) {
+      this.resize();
+      if (!this.canvas.width || !this.canvas.height || !this.game.width || !this.game.height) return;
+    }
     const v = this.view, g = this.gctx, cam = this.camera;
     v.time = time; v.now = now;
     cam.worldW = this.store.realm.w; cam.worldH = this.store.realm.h;

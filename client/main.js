@@ -86,7 +86,13 @@ async function boot() {
   let net = null, awaitingSpawn = true, stepInput = null, actions = null, inputAcc = 0;
   let last = performance.now(), time = 0;
   const axis = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, selfPos = { x: 0, y: 0 };
+  // The next frame is scheduled first, so one throwing draw call can never stop the game loop for good.
+  let frameErrors = 0;
   function frame() {
+    requestAnimationFrame(frame);
+    try { frameBody(); } catch (err) { if (frameErrors++ < 3) console.error('[tb:frame]', err); }
+  }
+  function frameBody() {
     const t = performance.now();
     const dt = Math.min(0.1, (t - last) / 1000);
     last = t;
@@ -103,7 +109,6 @@ async function boot() {
       renderer.frame(dt, t, time, null, null);
     }
     input.endFrame();
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
   window.__tb = { store, net: null, prediction, renderer, ui, sprites, particles, juice, input, camera, content };
