@@ -1,0 +1,6 @@
+﻿node_modules/
+saves/*
+!saves/.gitkeep
+*.log
+.DS_Store
+Thumbs.db

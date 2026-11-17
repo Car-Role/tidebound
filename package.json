@@ -1,0 +1,17 @@
+{
+  "name": "tidebound",
+  "version": "0.1.0",
+  "description": "Co-op top-down pixel-art island-expansion game",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node test/run.js",
+    "test:pacing": "node test/run.js pacing",
+    "bot": "node test/bot/pacing-bot.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
