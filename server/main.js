@@ -10,8 +10,8 @@ import { DEFAULT_PORT, MAX_MSG_BYTES } from '../shared/config.js';
 import { content, validateContent } from '../shared/data/index.js';
 import { Game } from './game/game.js';
 import { handleStatic, ROOT } from './http-static.js';
-import { Connection, startHeartbeat } from './net/connection.js';
-import { routeMessage } from './net/router.js';
+import { startHeartbeat } from './net/connection.js';
+import { attachSocket, wsSocket } from './net/transport.js';
 import { loadSave } from './persistence/save.js';
 
 export function parseArgs(argv) {
@@ -63,20 +63,10 @@ export async function startServer(args) {
   const stopHeartbeat = startHeartbeat(wss);
 
   wss.on('connection', (ws, req) => {
-    const conn = new Connection(ws, req.socket.remoteAddress);
+    // same adapter path as the browser host's loopback and PeerJS sockets (net/transport.js)
+    const conn = attachSocket(game, wsSocket(ws), { remoteAddress: req.socket.remoteAddress });
     ws.conn = conn;
     ws.on('pong', () => { conn.alive = true; });
-    ws.on('message', (raw, isBinary) => {
-      conn.alive = true;
-      const msg = conn.parse(raw, isBinary);
-      if (!msg) return;
-      try { routeMessage(game, conn, msg); } catch (err) { console.error('[tb:net] route error:', err); }
-    });
-    ws.on('close', () => {
-      conn.closed = true;
-      if (conn.player) game.leave(conn.player);
-    });
-    ws.on('error', () => {});
   });
 
   await new Promise((resolve, reject) => {

@@ -283,7 +283,10 @@ export class Game {
   }
 
   // Fixed-timestep real-time loop with drift correction; drops backlog beyond 250 ms (no spiral).
-  start() {
+  // `timers` swaps the timer source: the browser host passes worker-backed timers so a hidden tab keeps 20 Hz.
+  start(timers = null) {
+    const setT = timers?.setTimeout ?? setTimeout;
+    this.clearT = timers?.clearTimeout ?? clearTimeout;
     let last = performance.now();
     let acc = 0;
     const loop = () => {
@@ -292,12 +295,12 @@ export class Game {
       last = t;
       if (acc > 0.25) acc = TICK_DT;
       while (acc >= TICK_DT) { this.tick(TICK_DT); acc -= TICK_DT; }
-      this.timer = setTimeout(loop, Math.max(1, (TICK_DT - acc) * 1000));
+      this.timer = setT(loop, Math.max(1, (TICK_DT - acc) * 1000));
     };
-    this.timer = setTimeout(loop, TICK_DT * 1000);
+    this.timer = setT(loop, TICK_DT * 1000);
   }
 
-  stop() { if (this.timer) clearTimeout(this.timer); this.timer = null; }
+  stop() { if (this.timer) (this.clearT ?? clearTimeout)(this.timer); this.timer = null; }
 
   // ---------------------------------------------------------------- persistence
 

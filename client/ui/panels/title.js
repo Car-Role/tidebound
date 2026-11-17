@@ -3,6 +3,9 @@
 // seen from this browser, cached in localStorage by hud/toasts.js) and offers:
 //   Continue (the character this tab already has), New castaway (a fresh character in this world), Join by address
 //   (another server), Host a new world (how to start one), Settings.
+// On a static host (GitHub Pages, args.net === 'p2p') there is no server: the screen offers Host (run the world in
+// this tab) and Join (type a friend's room code) instead, and onDone gets { name, color, mode: 'host'|'join', code }.
+// args.notice (e.g. "The host left the game.") is shown once on the main view.
 // Text fields use input.textCapture.
 
 import { UI_COLORS } from '../widgets.js';
@@ -13,9 +16,10 @@ import { wrapText } from './dialog.js';
 import { Widgets } from '../widgets.js';
 import settingsPanel from './settings.js';
 import { drawText } from '../../render/text.js';
+import { normalizeRoomCode, isRoomCode, CODE_LEN } from '../../net/peer-client.js';
 
 const COLOR_NAMES = ['Teal', 'Ember', 'Gold', 'Violet', 'Sea', 'Moss', 'Coral', 'Slate'];
-const st = { view: 'main', args: null, name: '', color: 0, addr: '', field: null, t0: 0, err: '', hasChar: false, done: false };
+const st = { view: 'main', args: null, name: '', color: 0, addr: '', code: '', field: null, t0: 0, err: '', hasChar: false, done: false, net: 'ws', pending: null, notice: '' };
 
 export function worldCacheKey(host = (typeof location !== 'undefined' ? location.host : 'local')) { return 'tb.world.' + host; }
 const hm = (s) => `${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} m`;
@@ -36,11 +40,12 @@ function capture(ui, field) {
   input.textCapture = (e) => {
     if (e.type && e.type !== 'keydown') return;
     const cur = st[field];
-    const max = field === 'name' ? 16 : 64;
+    const max = field === 'name' ? 16 : field === 'code' ? CODE_LEN : 64;
     if (e.key === 'Backspace') st[field] = cur.slice(0, -1);
     else if (e.key === 'Enter') { release(ui); submit(ui); }
     else if (e.key === 'Escape') release(ui);
     else if (e.key === 'Tab') release(ui);
+    else if (field === 'code') { if (e.key && e.key.length === 1) st.code = normalizeRoomCode(cur + e.key); }
     else if (e.key && e.key.length === 1 && /[\x20-\x7e]/.test(e.key) && cur.length < max) st[field] = cur + e.key;
   };
 }
@@ -49,19 +54,33 @@ function release(ui) {
   st.field = null;
 }
 
-function finish(ui, profile) {
+function finish(ui, profile, extra = {}) {
   if (st.done) return;
   st.done = true;
   release(ui);
   ui.ui.sound('ui_click');
-  st.args?.onDone?.(profile);
+  if (st.net === 'p2p' && !extra.mode) extra = { ...extra, mode: 'host' };
+  st.args?.onDone?.({ ...profile, ...extra });
 }
+
+function toCode(ui) { st.view = 'code'; st.err = ''; capture(ui, 'code'); }
 
 function submit(ui) {
   if (st.view === 'new') {
     const name = st.name.replace(/[^\x20-\x7e]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
     if (!name) { st.err = 'Give your castaway a name.'; return; }
+    if (st.net === 'p2p') {
+      st.profile = { name, color: st.color };
+      if (st.pending === 'host') finish(ui, st.profile, { mode: 'host' });
+      else if (st.pending === 'join') toCode(ui);
+      else { st.hasChar = true; st.view = 'main'; release(ui); }
+      return;
+    }
     finish(ui, { name, color: st.color });
+  } else if (st.view === 'code') {
+    const code = normalizeRoomCode(st.code);
+    if (!isRoomCode(code)) { st.err = `A room code is ${CODE_LEN} letters and digits, e.g. K7QM2X.`; return; }
+    finish(ui, st.profile ?? st.args.profile, { mode: 'join', code });
   } else if (st.view === 'join') {
     const a = st.addr.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
     if (!/^[A-Za-z0-9.\-[\]:]+$/.test(a)) { st.err = 'Use host or host:port, e.g. 192.168.1.20:8080'; return; }
@@ -143,7 +162,61 @@ function field(ui, x, y, w, key, placeholder) {
   if (hot && ui.ui.mouse.released) { ui.ui.consumeClick(); capture(ui, key); }
 }
 
+// GitHub Pages: no server. Host runs the world in this tab; Join connects to a friend's tab by room code.
+function drawMainP2P(ui) {
+  const cx = ui.w / 2;
+  let y = 64;
+  ui.rect(14, y, ui.w - 28, 34, UI_COLORS.bgLight);
+  if (st.notice) {
+    wrapText(st.notice, ui.w - 40).slice(0, 2).forEach((l, i) => ui.label(20, y + 5 + i * 10, l, { color: UI_COLORS.bad }));
+    ui.label(20, y + 25, 'Host a world, or join with a code.', { color: UI_COLORS.dim });
+  } else {
+    ui.label(20, y + 5, 'Host: the world runs in your tab.', { color: UI_COLORS.text });
+    ui.label(20, y + 15, "Join: type a host's room code.", { color: UI_COLORS.text });
+    ui.label(20, y + 25, 'Up to 8 castaways per world.', { color: UI_COLORS.dim });
+  }
+  y += 42;
+  const bw = 150, bx = cx - bw / 2;
+  const prof = st.profile ?? st.args?.profile;
+  if (st.hasChar) {
+    if (ui.button(bx, y, `Host as ${prof?.name ?? ''}`, { w: bw, key: 'host' })) finish(ui, prof, { mode: 'host' });
+    y += 17;
+    if (ui.button(bx, y, `Join as ${prof?.name ?? ''}`, { w: bw, key: 'join' })) toCode(ui);
+    y += 17;
+    if (ui.button(bx, y, 'New castaway', { w: bw, key: 'new' })) {
+      try { sessionStorage.removeItem('tb.token'); sessionStorage.setItem('tb.newchar', '1'); } catch { /* ignore */ }
+      location.reload();
+    }
+  } else {
+    if (ui.button(bx, y, 'Host a world', { w: bw, key: 'host' })) { st.pending = 'host'; st.view = 'new'; st.err = ''; capture(ui, 'name'); }
+    y += 17;
+    if (ui.button(bx, y, 'Join with a code', { w: bw, key: 'join' })) { st.pending = 'join'; st.view = 'new'; st.err = ''; capture(ui, 'name'); }
+  }
+  y += 17;
+  if (ui.button(bx, y, 'How online play works', { w: bw, key: 'about' })) { st.view = 'about'; release(ui); }
+  y += 17;
+  if (ui.button(bx, y, 'Settings', { w: bw, key: 'settings' })) ui.ui.open('settings');
+}
+
+function drawCode(ui) {
+  ui.label(16, 64, 'Join a friend\'s world', { color: UI_COLORS.accent });
+  wrapText('The host sees the room code at the bottom right of their screen and in the pause menu (Esc).', ui.w - 32).slice(0, 3)
+    .forEach((l, i) => ui.label(16, 76 + i * 9, l, { color: UI_COLORS.dim }));
+  field(ui, 16, 106, 90, 'code', 'K7QM2X');
+  if (st.err) wrapText(st.err, ui.w - 32).slice(0, 2).forEach((l, i) => ui.label(16, 124 + i * 10, l, { color: UI_COLORS.bad }));
+  if (ui.button(16, 150, 'Join', { w: 80, key: 'go' })) submit(ui);
+  if (ui.button(102, 150, 'Back', { key: 'back' })) { st.view = 'main'; release(ui); }
+}
+
+function drawAbout(ui) {
+  ui.label(16, 64, 'Online play', { color: UI_COLORS.accent });
+  const text = 'Host runs the whole world inside your browser tab and saves it in this browser. You get a room code; friends open this page, click Join and type it. They connect straight to you (WebRTC). Keep your tab open: when you close it, the world stops for everyone. Some strict networks block these connections.';
+  wrapText(text, ui.w - 32).forEach((l, i) => ui.label(16, 76 + i * 9, l, { color: UI_COLORS.text }));
+  if (ui.button(16, 160, 'Back', { key: 'back' })) st.view = 'main';
+}
+
 function drawMain(ui) {
+  if (st.net === 'p2p') { drawMainP2P(ui); return; }
   const w = readWorld();
   const cx = ui.w / 2;
   let y = 64;
@@ -288,7 +361,7 @@ function startHost(mod, store) {
     if (managed()) return;
     if (host.input.textCapture) host.input.textCapture(e);
     else if (e.key === 'Escape' && host.settingsOpen) mgr.close('settings');
-    else if (e.key === 'Enter' && st.view === 'main' && st.hasChar) finish({ ui: mgr }, st.args.profile);
+    else if (e.key === 'Enter' && st.view === 'main' && st.hasChar) finish({ ui: mgr }, st.profile ?? st.args.profile);
     host.input.down.add(e.code);
     e.stopImmediatePropagation();
     if (e.key !== 'F5' && e.key !== 'F12') e.preventDefault();
@@ -370,6 +443,11 @@ export default {
     st.hasChar = !newChar && !!savedName;
     st.name = st.hasChar ? (args?.profile?.name ?? '') : '';
     st.view = newChar ? 'new' : 'main';
+    st.net = args?.net === 'p2p' ? 'p2p' : 'ws';
+    st.notice = args?.notice || '';
+    st.pending = null;
+    st.profile = null;
+    st.code = '';
     applyEverywhere(loadSettings(), { audio: null, store });
     startHost(this, store);
   },
@@ -381,7 +459,7 @@ export default {
 
   draw(ui) {
     // the main menu with "Continue as" has five buttons: grow the frame so the last one stays inside (P2-18)
-    this.h = st.view === 'main' && st.hasChar ? 196 : 178;
+    this.h = st.view === 'main' && (st.hasChar || st.net === 'p2p') ? 196 : 178;
     if (!st.inHost) st.managed = performance.now();
     if (st.view === 'new' && !st.field && !st.done && st.autoFocus !== st.t0) { st.autoFocus = st.t0; capture(ui, 'name'); }
     const t = (performance.now() - st.t0) / 1000;
@@ -400,6 +478,8 @@ export default {
       case 'new': drawNew(ui); break;
       case 'join': drawJoin(ui); break;
       case 'host': drawHost(ui); break;
+      case 'code': drawCode(ui); break;
+      case 'about': drawAbout(ui); break;
       default: drawMain(ui); break;
     }
     ui.label(ui.w / 2, ui.h + 8, 'v0.1 - co-op for 1 to 8 castaways', { color: UI_COLORS.dim, align: 'center', outline: true });

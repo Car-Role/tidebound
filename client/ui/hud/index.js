@@ -14,7 +14,8 @@ import party from './party.js';
 import minimap from './minimap.js';
 import chat from './chat.js';
 import toasts from './toasts.js';
+import room from './room.js';
 
 export default Object.freeze([
-  bars, hotbar, pickups, boss, abilities, draftBadge, clock, treasury, flux, goals, party, minimap, chat, toasts,
+  bars, hotbar, pickups, boss, abilities, draftBadge, clock, treasury, flux, goals, party, minimap, chat, toasts, room,
 ]);

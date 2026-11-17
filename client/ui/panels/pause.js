@@ -5,8 +5,9 @@
 import { UI_COLORS } from '../widgets.js';
 import { PAL, RAMPS, playerColor } from '../../art/palette.js';
 import { resetTutorial } from './tutorial.js';
+import { copyText } from '../clipboard.js';
 
-const st = { tab: 0, busy: false, msg: '', msgAt: 0, confirm: null };
+const st = { tab: 0, busy: false, msg: '', msgAt: 0, confirm: null, copiedAt: 0 };
 const hm = (s) => `${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} m`;
 const CAPS = [[null, 'Off'], [1000, '1k'], [5000, '5k'], [20000, '20k']];
 
@@ -32,7 +33,7 @@ function drawMenu(ui, store) {
   btn('Tutorial tips', 'tut', () => { ui.ui.close('pause'); resetTutorial(); });
   y += 6;
   if (st.confirm === 'leave') {
-    ui.label(bx, y + 2, 'Leave the world?', { color: UI_COLORS.bad });
+    ui.label(bx, y + 2, store.room?.role === 'host' ? 'Close the world?' : 'Leave the world?', { color: UI_COLORS.bad });
     y += 12;
     if (ui.button(bx, y, 'Yes, leave', { key: 'leaveyes', w: 58 })) { try { window.__tb?.net?.ws?.close(); } catch { /* ignore */ } location.reload(); }
     if (ui.button(bx + 62, y, 'Stay', { key: 'leaveno', w: 58 })) st.confirm = null;
@@ -50,6 +51,13 @@ function drawMenu(ui, store) {
   if (net) ui.label(x, 108, `Ping ${Math.round(net.rtt || 0)} ms`, { color: UI_COLORS.dim });
   const me = (c.players ?? []).find((p) => p.id === store.myId);
   if (me?.host) ui.label(x, 120, 'You are the host. See Crew.', { color: UI_COLORS.good });
+  // browser-hosted world (GitHub Pages): the room code friends type into Join
+  const room = store.room;
+  if (room?.code) {
+    ui.label(x, 133, `Room code ${room.code}`, { color: UI_COLORS.accent });
+    const copied = performance.now() - st.copiedAt < 1500;
+    if (ui.button(x + 100, 131, copied ? 'Copied' : 'Copy', { key: 'copycode', w: 40, h: 12 })) copyText(room.code).then((ok) => { st.copiedAt = ok ? performance.now() : 0; st.msg = ok ? 'Room code copied' : 'Copy failed: select it by hand'; st.msgAt = performance.now(); });
+  } else if (room?.role === 'host' && room.error) ui.label(x, 133, 'Offline: no room code', { color: UI_COLORS.bad });
   ui.label(x, 150, 'The world keeps running while', { color: UI_COLORS.dim });
   ui.label(x, 159, 'this menu is open.', { color: UI_COLORS.dim });
 }

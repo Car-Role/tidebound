@@ -1,8 +1,10 @@
 // World save: serialise/restore (TECH_SPEC 12), atomic write (.tmp then rename), rotating backups, load.
+// Storage goes through a pluggable store (setSaveStore). In Node the default is the file store (fs-store.js, loaded
+// lazily so this module never pulls node:* into a browser); the browser-hosted world installs browser-store.js
+// (IndexedDB, localStorage fallback). Store interface, all paths are opaque strings:
+//   existsSync(p) -> bool, readSync(p) -> string|null, writeSync(p, text), write(p, text) -> Promise,
+//   renameSync(from, to), copySync(from, to)
 
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { BACKUPS, BACKUP_INTERVAL_S } from '../../shared/config.js';
 import { FLAG } from '../../shared/grid.js';
 import { Entity } from '../game/entities.js';
@@ -10,6 +12,17 @@ import { snapshotProfile } from '../game/player.js';
 import { migrate } from './migrate.js';
 
 export const SAVE_VERSION = 1;
+
+const IS_NODE = typeof process !== 'undefined' && !!process.versions?.node && typeof window === 'undefined';
+let store = IS_NODE ? (await import('./fs-store.js')).fsStore : null;
+
+// Swap the storage backend (returns the previous one). The browser host calls this before Game.init.
+export function setSaveStore(s) { const prev = store; store = s; return prev; }
+export function getSaveStore() { return store; }
+function requireStore() {
+  if (!store) throw new Error('no save store installed (call setSaveStore)');
+  return store;
+}
 
 export function serializeGame(game) {
   const w = game.world;
@@ -125,44 +138,37 @@ export function restoreGame(game, data) {
   }
 }
 
-function backupPath(path, i) { return path.replace(/\.json$/, '') + `.bak${i}.json`; }
+export function backupPath(path, i) { return path.replace(/\.json$/, '') + `.bak${i}.json`; }
 
-function rotateBackupsSync(path) {
-  if (!fs.existsSync(path)) return;
+function rotateBackups(st, path) {
+  if (!st.existsSync(path)) return;
   for (let i = BACKUPS - 1; i >= 1; i--) {
     const from = backupPath(path, i);
-    if (fs.existsSync(from)) fs.renameSync(from, backupPath(path, i + 1));
+    if (st.existsSync(from)) st.renameSync(from, backupPath(path, i + 1));
   }
-  fs.copyFileSync(path, backupPath(path, 1));
+  st.copySync(path, backupPath(path, 1));
 }
 
 // Atomic write. Rotates backups at most every BACKUP_INTERVAL_S of simulated time.
 export async function saveToDisk(path, data, { sync = false, game = null } = {}) {
+  const st = requireStore();
   const json = JSON.stringify(data);
-  const tmp = path + '.tmp';
   const dueBackup = game && (game.lastBackupAt === undefined || game.now - game.lastBackupAt >= BACKUP_INTERVAL_S);
-  if (sync) {
-    fs.mkdirSync(dirname(path), { recursive: true });
-    if (dueBackup) { rotateBackupsSync(path); game.lastBackupAt = game.now; }
-    fs.writeFileSync(tmp, json);
-    fs.renameSync(tmp, path);
-    return json.length;
-  }
-  await fsp.mkdir(dirname(path), { recursive: true });
-  if (dueBackup) { rotateBackupsSync(path); game.lastBackupAt = game.now; }
-  await fsp.writeFile(tmp, json);
-  await fsp.rename(tmp, path);
+  if (dueBackup) { rotateBackups(st, path); game.lastBackupAt = game.now; }
+  if (sync) st.writeSync(path, json);
+  else await st.write(path, json);
   return json.length;
 }
 
 // Returns the parsed (migrated) save, falling back to the newest readable backup; null if none.
 export function loadSave(path) {
+  const st = requireStore();
   const candidates = [path];
   for (let i = 1; i <= BACKUPS; i++) candidates.push(backupPath(path, i));
   for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
+    if (!st.existsSync(p)) continue;
     try {
-      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const data = JSON.parse(st.readSync(p));
       if (p !== path) console.warn(`[tb:save] main save unreadable, loaded backup ${p}`);
       return migrate(data);
     } catch (err) {

@@ -12,11 +12,13 @@ export function isLoopback(addr) {
 }
 
 export class Connection {
-  constructor(ws, remoteAddress) {
+  // `ws` is any socket with readyState / send(text) / close(code, reason): a ws WebSocket or an adapter from
+  // transport.js. `opts.loopback` overrides the address check (the browser host's in-tab player is the host).
+  constructor(ws, remoteAddress, opts = {}) {
     this.id = nextConnId++;
     this.ws = ws;
     this.remoteAddress = remoteAddress || '';
-    this.loopback = isLoopback(this.remoteAddress);
+    this.loopback = typeof opts.loopback === 'boolean' ? opts.loopback : isLoopback(this.remoteAddress);
     this.player = null;
     this.tokens = RATE_LIMIT;
     this.lastRefill = performance.now();

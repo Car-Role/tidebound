@@ -1,28 +1,19 @@
 // Loads the wildcard folders (TECH_SPEC 14): every .js file default-exports an object with an `id`.
-// Owners add files freely; nothing here needs editing.
+// The file list comes from modules.manifest.js (generated, checked in) instead of a runtime readdir, so the same
+// loader runs in Node and in a browser tab (the browser-hosted world, client/net/host.js).
+// After adding or removing a file in one of these folders run: npm run manifest   (npm test fails until you do).
 
-import { readdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { WILDCARD_FILES } from './modules.manifest.js';
+import { WILDCARDS } from './wildcards.js';
 
-const GAME_DIR = dirname(fileURLToPath(import.meta.url));
+export { WILDCARDS };
 
-export const WILDCARDS = Object.freeze({
-  ai: { dir: 'ai', match: /\.js$/ },
-  bosses: { dir: 'bosses', match: /\.js$/ },
-  abilities: { dir: 'abilities', match: /\.js$/ },
-  keepers: { dir: 'dungeon/keepers', match: /\.js$/ },
-  rooms: { dir: 'dungeon', match: /^rooms-.*\.js$/ },
-});
-
-async function loadFolder(dir, match) {
+async function loadFolder(dir, files) {
   const out = new Map();
-  let files;
-  try { files = await readdir(join(GAME_DIR, dir)); } catch { return out; }
-  for (const f of files.sort()) {
-    if (!match.test(f)) continue;
+  for (const f of [...files].sort()) {
     try {
-      const mod = await import(pathToFileURL(join(GAME_DIR, dir, f)).href);
+      // relative specifier: resolved against this module's URL in both Node (file:) and the browser (http:)
+      const mod = await import(`./${dir}/${f}`);
       const def = mod.default;
       const id = def?.id ?? f.replace(/\.js$/, '');
       out.set(id, def ?? mod);
@@ -36,6 +27,6 @@ async function loadFolder(dir, match) {
 // Returns { ai: Map, bosses: Map, abilities: Map, keepers: Map, rooms: Map } keyed by module id.
 export async function loadWildcards() {
   const result = {};
-  for (const [key, { dir, match }] of Object.entries(WILDCARDS)) result[key] = await loadFolder(dir, match);
+  for (const [key, { dir }] of Object.entries(WILDCARDS)) result[key] = await loadFolder(dir, WILDCARD_FILES[key] ?? []);
   return result;
 }

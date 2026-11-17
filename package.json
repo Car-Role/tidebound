@@ -9,7 +9,8 @@
     "start": "node server/main.js",
     "test": "node test/run.js",
     "test:pacing": "node test/run.js pacing",
-    "bot": "node test/bot/pacing-bot.js"
+    "bot": "node test/bot/pacing-bot.js",
+    "manifest": "node scripts/gen-module-manifest.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -1,4 +1,6 @@
-// WebSocket client: connect, auto-reconnect with backoff, send helpers, request/response for `do`.
+// Protocol client: connect, auto-reconnect with backoff, send helpers, request/response for `do`.
+// The socket is a browser WebSocket (url string) or anything WebSocket-like returned by a factory: the in-tab
+// loopback of a browser-hosted world (server/net/transport.js) or a PeerJS channel (peer-client.js).
 
 import { PROTOCOL_VERSION } from '../../shared/protocol.js';
 
@@ -41,8 +43,11 @@ export function acquireToken() {
 }
 
 export class NetClient {
-  constructor(url) {
+  // `url`: ws:// address, or a function returning a WebSocket-like socket. `reconnect: false` for P2P sockets:
+  // a dropped channel means the host is gone, so the 'close' handler decides what to do.
+  constructor(url, { reconnect = true } = {}) {
     this.url = url;
+    this.reconnect = reconnect;
     this.ws = null;
     this.handlers = new Map();
     this.pending = new Map();
@@ -64,7 +69,7 @@ export class NetClient {
   }
 
   open() {
-    const ws = new WebSocket(this.url);
+    const ws = typeof this.url === 'function' ? this.url() : new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () => {
       this.connected = true;
@@ -88,12 +93,15 @@ export class NetClient {
         try { h(m); } catch (err) { console.error(`[tb:net] handler ${m.t} threw`, err); }
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      if (this.ws !== ws) return;
       this.connected = false;
+      this.closeInfo = { code: ev?.code, reason: ws.closeReason || ev?.reason || '' };
       clearInterval(this.pingTimer);
       for (const p of this.pending.values()) p({ t: 'res', ok: false, err: 'busy' });
       this.pending.clear();
       this.handlers.get('close')?.(this.closedByServer);
+      if (!this.reconnect) return;
       if (this.closedByServer && this.closedByServer.reason !== 'shutdown') return;   // do not fight a kick or reject
       this.closedByServer = null;
       setTimeout(() => this.open(), this.backoff);

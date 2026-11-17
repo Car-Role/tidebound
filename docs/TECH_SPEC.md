@@ -584,7 +584,7 @@ Modifier object: `{ stat: string, op: 'add' | 'mul', v: number }`.
 
 ## 6. Network protocol
 
-Transport: one WebSocket per client, JSON text frames. Every message is an object with a `t` field. Unknown `t` is ignored. Server validates every inbound field (type, range, reach, cooldown); the client is never trusted.
+Transport: one WebSocket per client, JSON text frames. On GitHub Pages the same messages travel over an in-tab loopback (the host's own player) or a reliable, ordered PeerJS/WebRTC data channel (friends), via the adapters in `server/net/transport.js` (see `docs/notes/PAGES-HOST.md`). Every message is an object with a `t` field. Unknown `t` is ignored. Server validates every inbound field (type, range, reach, cooldown); the client is never trusted.
 
 ### 6.1 Client -> server
 

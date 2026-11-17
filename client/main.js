@@ -26,6 +26,29 @@ const RATE_SLACK = 0.02;         // s added per swing so a held button never run
 const REVIVE_RESEND_S = 0.35;    // the server keeps a revive channel alive for 0.6 s per request
 const MAX_INPUT_BACKLOG_MS = 250;
 
+// 'ws' when the page is served by the Node server (direct WebSocket), 'p2p' on a static host such as GitHub Pages
+// (browser Host / Join). ?net=ws or ?net=p2p overrides.
+async function detectNetMode() {
+  const forced = new URLSearchParams(location.search).get('net');
+  if (forced === 'ws' || forced === 'p2p') return forced;
+  try {
+    const r = await fetch('server-info.json', { cache: 'no-store' });
+    if (r.ok && (await r.json())?.ws) return 'ws';
+  } catch { /* static host */ }
+  return 'p2p';
+}
+
+function takeNotice() {
+  try { const n = sessionStorage.getItem('tb.notice'); sessionStorage.removeItem('tb.notice'); return n; } catch { return null; }
+}
+
+// Back to the title with a message (host left, room not found...): the title shows it on the next load.
+function backToTitle(renderer, text, delayMs = 2500) {
+  renderer.status = text + '  Returning to the title...';
+  try { sessionStorage.setItem('tb.notice', text); } catch { /* ignore */ }
+  setTimeout(() => location.reload(), delayMs);
+}
+
 function loadProfile(token) {
   let name = null, color = null;
   try { name = localStorage.getItem('tb.name.' + token); color = Number(localStorage.getItem('tb.color.' + token)); } catch { /* ignore */ }
@@ -88,9 +111,11 @@ async function boot() {
   // title
   const token = acquireToken();
   let profile = loadProfile(token);
+  const netMode = await detectNetMode();
+  const notice = takeNotice();
   const title = ui.get('title');
   if (title && !title.auto) {
-    profile = await new Promise((resolve) => ui.open('title', { profile, onDone: resolve }));
+    profile = await new Promise((resolve) => ui.open('title', { profile, net: netMode, notice, onDone: resolve }));
     ui.close('title');
     try { localStorage.setItem('tb.name.' + token, profile.name); localStorage.setItem('tb.color.' + token, String(profile.color)); } catch { /* ignore */ }
   }
@@ -98,14 +123,53 @@ async function boot() {
   // ---- networking ----
   const now = () => performance.now();
   renderer.status = 'Connecting...';
-  net = new NetClient(`${proto}//${location.host}`);
+  const mode = netMode === 'ws' ? 'direct' : (profile.mode || 'host');
+  store.room = null;
+  let welcomeToast = null;
+  if (mode === 'host') {
+    try {
+      const { startBrowserHost } = await import('./net/host.js');
+      const host = await startBrowserHost({ onStatus: (s) => { renderer.status = s; } });
+      store.room = { role: 'host', code: host.code, error: host.peerError };
+      window.__tb.host = host;
+      net = new NetClient(() => host.clientSocket(), { reconnect: false });
+      welcomeToast = host.code ? { text: `Room code ${host.code}: friends click Join and type it.`, kind: 'good' }
+        : { text: `Playing offline (no room code): ${host.peerError}`, kind: 'warn' };
+    } catch (err) {
+      console.error('[tb:host] failed to start', err);
+      backToTitle(renderer, `Could not start the world: ${err.message}`, 4000);
+      return;
+    }
+  } else if (mode === 'join') {
+    const { PeerClientSocket } = await import('./net/peer-client.js');
+    store.room = { role: 'join', code: profile.code };
+    renderer.status = `Joining ${profile.code}...`;
+    net = new NetClient(() => new PeerClientSocket(profile.code), { reconnect: false });
+  } else {
+    net = new NetClient(`${proto}//${location.host}`);
+  }
   ui.net = net;
   window.__tb.net = net;
   net
-    .on('welcome', (m) => { store.applyWelcome(m, now()); awaitingSpawn = true; renderer.status = ''; })
+    .on('welcome', (m) => {
+      store.applyWelcome(m, now()); awaitingSpawn = true; renderer.status = '';
+      if (welcomeToast) { const t = welcomeToast; welcomeToast = null; setTimeout(() => store.emit('toast', t), 1500); }
+    })
     .on('reject', (m) => { renderer.status = `Cannot join: ${m.reason}`; })
-    .on('kicked', (m) => { renderer.status = `Disconnected: ${m.reason}`; })
-    .on('close', (why) => { if (!why || why.reason === 'shutdown') renderer.status = 'Reconnecting...'; })
+    .on('kicked', (m) => {
+      if (m.reason === 'host_left') backToTitle(renderer, 'The host left the game.');
+      else renderer.status = `Disconnected: ${m.reason}`;
+    })
+    .on('close', (why) => {
+      if (mode === 'direct') { if (!why || why.reason === 'shutdown') renderer.status = 'Reconnecting...'; return; }
+      if (why) return;          // kicked / reject already handled
+      const sock = net.ws;
+      const r = sock?.closeReason;
+      if (r === 'no_room') backToTitle(renderer, `No world with code ${profile.code}. Check it with the host.`, 3000);
+      else if (r === 'host_left') backToTitle(renderer, 'The host left the game.');
+      else if (r === 'closed') return;                                    // we left
+      else backToTitle(renderer, mode === 'join' ? `Could not stay connected to the host. ${sock?.closeText || ''}`.trim() : 'The world stopped.', 3500);
+    })
     .on('snap', (m) => {
       store.applySnap(m, now());
       if (awaitingSpawn) {

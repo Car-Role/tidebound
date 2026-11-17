@@ -7,6 +7,14 @@ import { SpatialHash } from './spatial.js';
 // Flags that belong to the tile (saved in tilePatches). SOLID and OWNED are derived on load.
 export const PERSIST_FLAGS = FLAG.NO_SPAWN | FLAG.LIT | FLAG.WATERED;
 
+// Base64 of a byte array. Node has Buffer; the browser-hosted server (client/net/host.js) uses btoa.
+export function toBase64Browser(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+export const toBase64 = typeof Buffer !== 'undefined' ? (u8) => Buffer.from(u8).toString('base64') : toBase64Browser;
+
 export class Realm {
   constructor({ id, w, h, kind = 'overworld', fill = T.DEEP }) {
     this.id = id;
@@ -98,7 +106,7 @@ export class Realm {
 
   chunkMessage(cx, cy) {
     const { g, f } = this.chunkBytes(cx, cy);
-    return { t: 'chunk', realm: this.id, cx, cy, g: Buffer.from(g).toString('base64'), f: Buffer.from(f).toString('base64') };
+    return { t: 'chunk', realm: this.id, cx, cy, g: toBase64(g), f: toBase64(f) };
   }
 
   // ---- entities ----
